@@ -41,31 +41,42 @@ int _tmain(int argc, _TCHAR* argv[])
 	if (!AttachConsole(procId))
 	{
 		auto error = GetLastError();
+		AttachConsole(-1);
 		if (error == ERROR_GEN_FAILURE)
 		{
 			bvresult = 3;
             // Process does not exist
-            //printf("Process does not exist\n");
+            printf("Process does not exist\n");
 			//return 3;
 		}
 		else if (error == ERROR_INVALID_HANDLE)
         {
             bvresult = 4;
             // Process does not have a console.
-            //printf("Process does not have a console\n");
+            printf("Process does not have a console\n");
 			//return 4;
         }
-        bvresult = 5;
-        //printf("Unknown AttachConsole error\n");
+		else if (error == ERROR_ACCESS_DENIED)
+		{
+            bvresult = 5;
+            printf("Does not have access. please run as adminstrator\n");
+		}
+		else
+		{
+			bvresult = 5;
+			printf("Unknown AttachConsole error: %d\n", error);
+		}
 		//return 5;
 	}
 	if (bvresult == 0)
 	{
 		// Send CTRL+C to target process (and outselves).
 		if (!GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0))
-		{
+        {
+            auto error = GetLastError();
+			AttachConsole(-1);
 			bvresult = 6;
-			//printf("Failed to send CTRL+C signal to process\n");
+			printf("Failed to send CTRL+C signal to process: %d \n", error);
 			//return 6;
 		}
 	}
