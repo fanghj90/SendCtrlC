@@ -2,47 +2,7 @@
 //
 
 #include "stdafx.h"
-
-// Helper class for making sure a HANDLE is closed properly.
-class ScopedHandle
-{
-public:
-	// Construct from a HANDLE.
-	ScopedHandle(HANDLE inHandle)
-		: handle(inHandle)
-	{}
-
-	// Destructor: close the handle when going out of scope, if valid.
-	~ScopedHandle()
-	{
-		if (IsValid())
-		{
-			CloseHandle(handle);
-		}
-	}
-
-	// Do we wrap a valid handle.
-	bool IsValid() const
-	{
-		return handle != NULL;
-	}
-
-	// Implicit conversion to HANDLE to allow passing direct to Win32 functions.
-	operator HANDLE()
-	{
-		return handle;
-	}
-
-private:
-	HANDLE handle;
-
-	// Non-copyable.
-	ScopedHandle(const ScopedHandle&);
-	ScopedHandle& operator=(const ScopedHandle&);
-};
-
-bool IsCmdExe(DWORD procId);
-void TerminateBatchFile();
+#include "stdio.h"
 
 // Return codes:
 //   0: Success
@@ -57,13 +17,15 @@ int _tmain(int argc, _TCHAR* argv[])
 	if (argc <= 1)
 	{
 		// Need process id.
+		printf("cmd processid\n");
 		return 1;
 	}
 
 	DWORD procId = _ttol(argv[1]);
 	if (procId == 0)
 	{
-		// Invalid id
+        // Invalid id
+        printf("processid invalid\n");
 		return 2;
 	}
 
@@ -74,88 +36,59 @@ int _tmain(int argc, _TCHAR* argv[])
 	// Ignore error -- it just means we weren't already attached.
 	FreeConsole();
 
+	int bvresult = 0;
 	// Attach to console of given proc id
 	if (!AttachConsole(procId))
 	{
 		auto error = GetLastError();
 		if (error == ERROR_GEN_FAILURE)
 		{
-			// Process does not exist
-			return 3;
+			bvresult = 3;
+            // Process does not exist
+            //printf("Process does not exist\n");
+			//return 3;
 		}
 		else if (error == ERROR_INVALID_HANDLE)
+        {
+            bvresult = 4;
+            // Process does not have a console.
+            //printf("Process does not have a console\n");
+			//return 4;
+        }
+        bvresult = 5;
+        //printf("Unknown AttachConsole error\n");
+		//return 5;
+	}
+	if (bvresult == 0)
+	{
+		// Send CTRL+C to target process (and outselves).
+		if (!GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0))
 		{
-			// Process does not have a console.
-			return 4;
+			bvresult = 6;
+			//printf("Failed to send CTRL+C signal to process\n");
+			//return 6;
 		}
-		return 5;
 	}
 
-	// Send CTRL+C to target process (and outselves).
-	if (!GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0))
-	{
-		return 6;
+	// 
+    HANDLE hProcess = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, procId);
+    if (INVALID_HANDLE_VALUE == hProcess)
+    {
+        return 0;
+    }
+	if (bvresult == 0)
+    {
+		if (WaitForSingleObject(hProcess, 5 * 1000) != WAIT_OBJECT_0)
+		{
+			bvresult = 7;
+		}
 	}
-
-	// If the process is cmd.exe (and is therefore probably a batch file)
-	// attempt to dismiss the "Terminate batch job?" prompt.
-	if (IsCmdExe(procId))
+	if (bvresult != 0)
 	{
-		TerminateBatchFile();
+		TerminateProcess(hProcess, 0);
 	}
+    CloseHandle(hProcess);
 
 	return 0;
 }
 
-// Attempt to dismiss a "Terminate batch job?" prompt.
-void TerminateBatchFile()
-{
-	INPUT_RECORD input[2];
-	ZeroMemory(input, sizeof(input));
-
-	// Y key.
-	input[0].EventType = KEY_EVENT;
-	input[0].Event.KeyEvent.bKeyDown = TRUE;
-	input[0].Event.KeyEvent.uChar.UnicodeChar = L'y';
-	input[0].Event.KeyEvent.wRepeatCount = 1;
-
-	// Enter
-	input[1].EventType = KEY_EVENT;
-	input[1].Event.KeyEvent.bKeyDown = TRUE;
-	input[1].Event.KeyEvent.uChar.UnicodeChar = VK_RETURN;
-	input[1].Event.KeyEvent.wRepeatCount = 1;
-
-	// Slight hack: wait a bit for the prompt to appear.
-	Sleep(1);
-
-	DWORD numWritten;
-	auto stdInHandle = GetStdHandle(STD_INPUT_HANDLE);
-	WriteConsoleInput(stdInHandle, input, 2, &numWritten);
-}
-
-// Is the process with the given ID an instance of cmd.exe (and is therefore probably a batch file)?
-bool IsCmdExe(DWORD procId)
-{
-	// Open the process.
-	ScopedHandle process(OpenProcess(
-		PROCESS_QUERY_INFORMATION,
-		FALSE,	// bInheritHandle
-		procId));
-	if (!process.IsValid())
-	{
-		return false;
-	}
-
-	TCHAR filename[MAX_PATH];
-	DWORD size = MAX_PATH;
-	if (!QueryFullProcessImageName(process, 0, filename, &size))
-	{
-		return false;
-	}
-
-	// Convert to lowercase.
-	_tcslwr_s(filename);
-
-	// Does the filename include "cmd.exe"?
-	return _tcsstr(filename, TEXT("cmd.exe")) != NULL;
-}
